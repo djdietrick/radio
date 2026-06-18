@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: radio
+      POSTGRES_PASSWORD: radio
+      POSTGRES_DB: radio
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U radio -d radio"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      RADIO_DATABASE_URL: postgres://radio:radio@db:5432/radio?sslmode=disable
+      RADIO_LISTEN_ADDR: ":8080"
+      RADIO_MUSIC_DIRS: "/music"
+      RADIO_ART_CACHE_DIR: "/data/art"
+      RADIO_SCAN_ON_STARTUP: "true"
+      RADIO_WATCH_ENABLED: "true"
+      RADIO_EXTERNAL_METADATA: "false"
+      # Auth: set a strong secret in production so tokens survive restarts, and
+      # set the bootstrap admin password to enable login on first run.
+      RADIO_JWT_SECRET: "${RADIO_JWT_SECRET:-change-me-in-production}"
+      RADIO_ADMIN_USERNAME: "${RADIO_ADMIN_USERNAME:-admin}"
+      RADIO_ADMIN_PASSWORD: "${RADIO_ADMIN_PASSWORD:-}"
+    ports:
+      - "8080:8080"
+    volumes:
+      # Point MUSIC_DIR at your music library on the host (read-only).
+      - ${MUSIC_DIR:-./sample-music}:/music:ro
+      - art_cache:/data/art
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  art_cache:

@@ -1,0 +1,15 @@
+# Go
+/radio
+/out
+*.test
+
+# Node / Vite
+web/node_modules/
+web/dist/
+
+# Local data
+sample-music/
+*.env
+.env
+
+.vscode
