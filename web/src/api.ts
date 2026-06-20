@@ -40,6 +40,9 @@ export interface PlaylistItem {
   position: number;
   trackId?: string;
   albumId?: string;
+  // Set on the track items of a hand-picked group; same value ties them into one
+  // ordered shuffle unit.
+  groupId?: string;
 }
 
 export interface Playlist {
@@ -204,8 +207,16 @@ export const api = {
     playlistID: string,
     item: { kind: PlaylistItemKind; trackId?: string; albumId?: string },
   ) => post<PlaylistItem>(`/api/playlists/${playlistID}/items`, item),
+  // Add a hand-picked set of tracks as one ordered group (trackIds in play order).
+  addPlaylistGroup: (playlistID: string, trackIds: string[]) =>
+    post<PlaylistItem[]>(`/api/playlists/${playlistID}/items`, {
+      kind: "group",
+      trackIds,
+    }),
   removePlaylistItem: (playlistID: string, itemID: string) =>
     del<void>(`/api/playlists/${playlistID}/items/${itemID}`),
+  removePlaylistGroup: (playlistID: string, groupID: string) =>
+    del<void>(`/api/playlists/${playlistID}/groups/${groupID}`),
 
   // Stations
   listStations: () => get<Station[]>("/api/stations"),

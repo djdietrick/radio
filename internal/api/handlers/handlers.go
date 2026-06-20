@@ -252,10 +252,15 @@ func (h *Handlers) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// kindGroup is an API-only item kind: it creates several track rows sharing a
+// group_id (stored as kind='track'). It isn't a models.PlaylistItemKind.
+const kindGroup = "group"
+
 type addItemReq struct {
-	Kind    models.PlaylistItemKind `json:"kind"`    // "track" | "album"
-	TrackID string                  `json:"trackId"` // set when kind=track
-	AlbumID string                  `json:"albumId"` // set when kind=album
+	Kind     models.PlaylistItemKind `json:"kind"`     // "track" | "album" | "group"
+	TrackID  string                  `json:"trackId"`  // set when kind=track
+	AlbumID  string                  `json:"albumId"`  // set when kind=album
+	TrackIDs []string                `json:"trackIds"` // set when kind=group, in play order
 }
 
 func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +269,24 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	playlistID := chi.URLParam(r, "playlistID")
+
+	// A group is a hand-picked set of tracks that plays in order and shuffles as
+	// one unit (like an album item, but a subset).
+	if string(req.Kind) == kindGroup {
+		if len(req.TrackIDs) == 0 {
+			writeErr(w, http.StatusBadRequest, "trackIds required for a group")
+			return
+		}
+		items, err := h.d.Playlists.AddGroup(r.Context(), playlistID, req.TrackIDs)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to add group")
+			return
+		}
+		writeJSON(w, http.StatusCreated, items)
+		return
+	}
+
 	var refID string
 	switch req.Kind {
 	case models.ItemKindTrack:
@@ -271,7 +294,7 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 	case models.ItemKindAlbum:
 		refID = req.AlbumID
 	default:
-		writeErr(w, http.StatusBadRequest, "kind must be 'track' or 'album'")
+		writeErr(w, http.StatusBadRequest, "kind must be 'track', 'album' or 'group'")
 		return
 	}
 	if refID == "" {
@@ -279,7 +302,7 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.d.Playlists.AddItem(r.Context(), chi.URLParam(r, "playlistID"), req.Kind, refID)
+	item, err := h.d.Playlists.AddItem(r.Context(), playlistID, req.Kind, refID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to add item")
 		return
@@ -290,6 +313,16 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) RemovePlaylistItem(w http.ResponseWriter, r *http.Request) {
 	if err := h.d.Playlists.RemoveItem(r.Context(), chi.URLParam(r, "itemID")); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to remove item")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) RemovePlaylistGroup(w http.ResponseWriter, r *http.Request) {
+	err := h.d.Playlists.RemoveGroup(r.Context(),
+		chi.URLParam(r, "playlistID"), chi.URLParam(r, "groupID"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to remove group")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

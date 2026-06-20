@@ -97,11 +97,31 @@ export const useAddPlaylistItem = () => {
   });
 };
 
+export const useAddPlaylistGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { playlistID: string; trackIds: string[] }) =>
+      api.addPlaylistGroup(vars.playlistID, vars.trackIds),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: keys.playlist(vars.playlistID) }),
+  });
+};
+
 export const useRemovePlaylistItem = () => {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: { playlistID: string; itemID: string }) =>
       api.removePlaylistItem(vars.playlistID, vars.itemID),
+    onSuccess: (_data, vars) =>
+      qc.invalidateQueries({ queryKey: keys.playlist(vars.playlistID) }),
+  });
+};
+
+export const useRemovePlaylistGroup = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { playlistID: string; groupID: string }) =>
+      api.removePlaylistGroup(vars.playlistID, vars.groupID),
     onSuccess: (_data, vars) =>
       qc.invalidateQueries({ queryKey: keys.playlist(vars.playlistID) }),
   });

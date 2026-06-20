@@ -63,13 +63,16 @@ const (
 )
 
 // PlaylistItem is one ordered entry in a playlist. Exactly one of TrackID or
-// AlbumID is set, per Kind.
+// AlbumID is set, per Kind. GroupID, when set on a set of track items, ties them
+// into one indivisible shuffle unit that plays in order (a hand-picked subset of
+// an album behaves like a whole-album item).
 type PlaylistItem struct {
 	ID       string           `json:"id"`
 	Kind     PlaylistItemKind `json:"kind"`
 	Position int              `json:"position"`
 	TrackID  string           `json:"trackId,omitempty"`
 	AlbumID  string           `json:"albumId,omitempty"`
+	GroupID  string           `json:"groupId,omitempty"`
 }
 
 // Playlist is an ordered list of typed items owned by a user.

@@ -74,8 +74,11 @@ Domain packages under `internal/`:
   `scanner` (directory walk + fsnotify watcher + the combined backfill).
 - **playlist** — `Store` (typed items) and `Resolver`, which flattens typed
   items into an ordered track queue. The resolver is the heart of album-aware
-  shuffle: it builds shufflable *units* (a lone track, or an album as one
-  ordered unit) and shuffles units vs. flat tracks based on options.
+  shuffle: it builds shufflable *units* (a lone track, an album as one ordered
+  unit, or a hand-picked *group* — consecutive `track` items sharing a
+  `group_id` — kept together and in order) and shuffles units vs. flat tracks
+  based on options. Groups behave like albums under shuffle: indivisible and
+  ordered with `AlbumShuffle` on, broken apart in flat shuffle.
 - **radio** — `Engine` computes station state. `computeNowPlaying` is the pure
   positional math; `LiveSession` caches a resolved queue so a WebSocket
   connection doesn't re-resolve on every track boundary.

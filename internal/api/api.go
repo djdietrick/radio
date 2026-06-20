@@ -120,6 +120,7 @@ func NewRouter(d Deps) http.Handler {
 			r.Delete("/playlists/{playlistID}", h.DeletePlaylist)
 			r.Post("/playlists/{playlistID}/items", h.AddPlaylistItem)
 			r.Delete("/playlists/{playlistID}/items/{itemID}", h.RemovePlaylistItem)
+			r.Delete("/playlists/{playlistID}/groups/{groupID}", h.RemovePlaylistGroup)
 
 			// Radio management (create requires auth; single-station reads
 			// above are public, but listing is gated to logged-in users)
