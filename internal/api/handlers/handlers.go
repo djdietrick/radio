@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/djdietrick/radio/internal/auth"
@@ -71,6 +72,15 @@ func (h *Handlers) ListAlbums(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, albums)
 }
 
+func (h *Handlers) GetAlbum(w http.ResponseWriter, r *http.Request) {
+	album, err := h.d.Catalog.GetAlbum(r.Context(), chi.URLParam(r, "albumID"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "album not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, album)
+}
+
 func (h *Handlers) AlbumTracks(w http.ResponseWriter, r *http.Request) {
 	albumID := chi.URLParam(r, "albumID")
 	tracks, err := h.d.Catalog.ListTracksByAlbum(r.Context(), albumID)
@@ -79,6 +89,64 @@ func (h *Handlers) AlbumTracks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tracks)
+}
+
+// --- artists ---
+
+func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {
+	limit, offset := paginate(r)
+	artists, err := h.d.Catalog.ListArtists(r.Context(), limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list artists")
+		return
+	}
+	writeJSON(w, http.StatusOK, artists)
+}
+
+func (h *Handlers) GetArtist(w http.ResponseWriter, r *http.Request) {
+	artist, err := h.d.Catalog.GetArtist(r.Context(), chi.URLParam(r, "artistID"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "artist not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, artist)
+}
+
+func (h *Handlers) ArtistAlbums(w http.ResponseWriter, r *http.Request) {
+	albums, err := h.d.Catalog.ListAlbumsByArtist(r.Context(), chi.URLParam(r, "artistID"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list artist albums")
+		return
+	}
+	writeJSON(w, http.StatusOK, albums)
+}
+
+// --- search ---
+
+// Search runs a substring query over tracks/albums/artists. An empty query
+// returns empty result sets rather than erroring.
+func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, &models.SearchResults{
+			Tracks:  []models.Track{},
+			Albums:  []models.Album{},
+			Artists: []models.Artist{},
+		})
+		return
+	}
+	limit := 25
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := parseIntClamp(v, 1, 100); err == nil {
+			limit = n
+		}
+	}
+	results, err := h.d.Catalog.Search(r.Context(), q, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "search failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
 func (h *Handlers) GetTrack(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +317,16 @@ func (h *Handlers) CreateStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, st)
+}
+
+// ListStations returns all stations so they're discoverable in the UI.
+func (h *Handlers) ListStations(w http.ResponseWriter, r *http.Request) {
+	stations, err := h.d.Radio.ListStations(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list stations")
+		return
+	}
+	writeJSON(w, http.StatusOK, stations)
 }
 
 func (h *Handlers) GetStation(w http.ResponseWriter, r *http.Request) {

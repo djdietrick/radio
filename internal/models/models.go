@@ -45,6 +45,13 @@ type Artist struct {
 	TrackCount int    `json:"trackCount"`
 }
 
+// SearchResults groups library search hits across the three entity types.
+type SearchResults struct {
+	Tracks  []Track  `json:"tracks"`
+	Albums  []Album  `json:"albums"`
+	Artists []Artist `json:"artists"`
+}
+
 // PlaylistItemKind distinguishes a single-track entry from a whole-album entry.
 // This is the core of the album-aware shuffle: in album-shuffle mode an album
 // item plays its tracks in order as one indivisible unit.
