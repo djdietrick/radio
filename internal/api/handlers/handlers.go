@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/djdietrick/radio/internal/auth"
@@ -71,6 +72,15 @@ func (h *Handlers) ListAlbums(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, albums)
 }
 
+func (h *Handlers) GetAlbum(w http.ResponseWriter, r *http.Request) {
+	album, err := h.d.Catalog.GetAlbum(r.Context(), chi.URLParam(r, "albumID"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "album not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, album)
+}
+
 func (h *Handlers) AlbumTracks(w http.ResponseWriter, r *http.Request) {
 	albumID := chi.URLParam(r, "albumID")
 	tracks, err := h.d.Catalog.ListTracksByAlbum(r.Context(), albumID)
@@ -79,6 +89,64 @@ func (h *Handlers) AlbumTracks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, tracks)
+}
+
+// --- artists ---
+
+func (h *Handlers) ListArtists(w http.ResponseWriter, r *http.Request) {
+	limit, offset := paginate(r)
+	artists, err := h.d.Catalog.ListArtists(r.Context(), limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list artists")
+		return
+	}
+	writeJSON(w, http.StatusOK, artists)
+}
+
+func (h *Handlers) GetArtist(w http.ResponseWriter, r *http.Request) {
+	artist, err := h.d.Catalog.GetArtist(r.Context(), chi.URLParam(r, "artistID"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "artist not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, artist)
+}
+
+func (h *Handlers) ArtistAlbums(w http.ResponseWriter, r *http.Request) {
+	albums, err := h.d.Catalog.ListAlbumsByArtist(r.Context(), chi.URLParam(r, "artistID"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list artist albums")
+		return
+	}
+	writeJSON(w, http.StatusOK, albums)
+}
+
+// --- search ---
+
+// Search runs a substring query over tracks/albums/artists. An empty query
+// returns empty result sets rather than erroring.
+func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, &models.SearchResults{
+			Tracks:  []models.Track{},
+			Albums:  []models.Album{},
+			Artists: []models.Artist{},
+		})
+		return
+	}
+	limit := 25
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := parseIntClamp(v, 1, 100); err == nil {
+			limit = n
+		}
+	}
+	results, err := h.d.Catalog.Search(r.Context(), q, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "search failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, results)
 }
 
 func (h *Handlers) GetTrack(w http.ResponseWriter, r *http.Request) {
@@ -184,10 +252,15 @@ func (h *Handlers) DeletePlaylist(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// kindGroup is an API-only item kind: it creates several track rows sharing a
+// group_id (stored as kind='track'). It isn't a models.PlaylistItemKind.
+const kindGroup = "group"
+
 type addItemReq struct {
-	Kind    models.PlaylistItemKind `json:"kind"`    // "track" | "album"
-	TrackID string                  `json:"trackId"` // set when kind=track
-	AlbumID string                  `json:"albumId"` // set when kind=album
+	Kind     models.PlaylistItemKind `json:"kind"`     // "track" | "album" | "group"
+	TrackID  string                  `json:"trackId"`  // set when kind=track
+	AlbumID  string                  `json:"albumId"`  // set when kind=album
+	TrackIDs []string                `json:"trackIds"` // set when kind=group, in play order
 }
 
 func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
@@ -196,6 +269,24 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	playlistID := chi.URLParam(r, "playlistID")
+
+	// A group is a hand-picked set of tracks that plays in order and shuffles as
+	// one unit (like an album item, but a subset).
+	if string(req.Kind) == kindGroup {
+		if len(req.TrackIDs) == 0 {
+			writeErr(w, http.StatusBadRequest, "trackIds required for a group")
+			return
+		}
+		items, err := h.d.Playlists.AddGroup(r.Context(), playlistID, req.TrackIDs)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "failed to add group")
+			return
+		}
+		writeJSON(w, http.StatusCreated, items)
+		return
+	}
+
 	var refID string
 	switch req.Kind {
 	case models.ItemKindTrack:
@@ -203,7 +294,7 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 	case models.ItemKindAlbum:
 		refID = req.AlbumID
 	default:
-		writeErr(w, http.StatusBadRequest, "kind must be 'track' or 'album'")
+		writeErr(w, http.StatusBadRequest, "kind must be 'track', 'album' or 'group'")
 		return
 	}
 	if refID == "" {
@@ -211,7 +302,7 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, err := h.d.Playlists.AddItem(r.Context(), chi.URLParam(r, "playlistID"), req.Kind, refID)
+	item, err := h.d.Playlists.AddItem(r.Context(), playlistID, req.Kind, refID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to add item")
 		return
@@ -222,6 +313,16 @@ func (h *Handlers) AddPlaylistItem(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) RemovePlaylistItem(w http.ResponseWriter, r *http.Request) {
 	if err := h.d.Playlists.RemoveItem(r.Context(), chi.URLParam(r, "itemID")); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to remove item")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) RemovePlaylistGroup(w http.ResponseWriter, r *http.Request) {
+	err := h.d.Playlists.RemoveGroup(r.Context(),
+		chi.URLParam(r, "playlistID"), chi.URLParam(r, "groupID"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to remove group")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -249,6 +350,16 @@ func (h *Handlers) CreateStation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, st)
+}
+
+// ListStations returns all stations so they're discoverable in the UI.
+func (h *Handlers) ListStations(w http.ResponseWriter, r *http.Request) {
+	stations, err := h.d.Radio.ListStations(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to list stations")
+		return
+	}
+	writeJSON(w, http.StatusOK, stations)
 }
 
 func (h *Handlers) GetStation(w http.ResponseWriter, r *http.Request) {

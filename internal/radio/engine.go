@@ -68,6 +68,29 @@ func (e *Engine) GetStation(ctx context.Context, id string) (*models.Station, er
 	return &st, nil
 }
 
+// ListStations returns all stations, newest first. Stations are a shared,
+// discoverable feature (tune-in is public), so listing isn't scoped per user.
+func (e *Engine) ListStations(ctx context.Context) ([]models.Station, error) {
+	rows, err := e.db.Pool.Query(ctx, `
+		SELECT id, user_id, name, playlist_id, started_at, album_shuffle, shuffle_seed, loop, created_at
+		FROM stations ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []models.Station
+	for rows.Next() {
+		var st models.Station
+		if err := rows.Scan(&st.ID, &st.UserID, &st.Name, &st.PlaylistID, &st.StartedAt,
+			&st.AlbumShuffle, &st.ShuffleSeed, &st.Loop, &st.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
 // resolveQueue expands the station's playlist into its deterministic queue.
 // Radio stations always shuffle (that's the point of a "station"); AlbumShuffle
 // decides whether albums stay together.

@@ -13,14 +13,23 @@ import (
 	"github.com/djdietrick/radio/internal/models"
 )
 
-// unit is one shufflable element: either a lone track or an ordered album.
+// unit is one shufflable element: a lone track, an ordered album, or a
+// hand-picked group of tracks (all kept together and in order).
 type unit struct {
 	tracks []models.Track
 }
 
+// trackSource is the slice of the catalog the resolver needs. Depending on an
+// interface (rather than *catalog.Store) keeps the unit-building logic DB-free
+// and testable; *catalog.Store satisfies it.
+type trackSource interface {
+	GetTrack(ctx context.Context, id string) (*models.Track, error)
+	ListTracksByAlbum(ctx context.Context, albumID string) ([]models.Track, error)
+}
+
 // Resolver expands playlist items into a track queue.
 type Resolver struct {
-	catalog *catalog.Store
+	catalog trackSource
 }
 
 func NewResolver(c *catalog.Store) *Resolver {
@@ -66,6 +75,13 @@ func (r *Resolver) Resolve(ctx context.Context, items []models.PlaylistItem, opt
 
 func (r *Resolver) buildUnits(ctx context.Context, items []models.PlaylistItem) ([]unit, error) {
 	units := make([]unit, 0, len(items))
+	// Track the group currently being accumulated so consecutive track items
+	// sharing a group_id collapse into one ordered, indivisible unit. Items are
+	// position-ordered and a group's rows are always consecutive, so this stays a
+	// single pass. lastGroup is "" between groups (and for ungrouped items), and
+	// the GroupID != "" guard keeps adjacent single tracks from merging.
+	lastGroup := ""
+	groupUnitIdx := -1
 	for _, it := range items {
 		switch it.Kind {
 		case models.ItemKindTrack:
@@ -74,8 +90,21 @@ func (r *Resolver) buildUnits(ctx context.Context, items []models.PlaylistItem) 
 				// Skip dangling references rather than failing the whole resolve.
 				continue
 			}
+			if it.GroupID != "" && it.GroupID == lastGroup && groupUnitIdx >= 0 {
+				units[groupUnitIdx].tracks = append(units[groupUnitIdx].tracks, *t)
+				continue
+			}
 			units = append(units, unit{tracks: []models.Track{*t}})
+			if it.GroupID != "" {
+				lastGroup = it.GroupID
+				groupUnitIdx = len(units) - 1
+			} else {
+				lastGroup = ""
+				groupUnitIdx = -1
+			}
 		case models.ItemKindAlbum:
+			lastGroup = ""
+			groupUnitIdx = -1
 			tracks, err := r.catalog.ListTracksByAlbum(ctx, it.AlbumID)
 			if err != nil || len(tracks) == 0 {
 				continue

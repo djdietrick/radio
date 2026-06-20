@@ -70,7 +70,8 @@ func (s *Store) Get(ctx context.Context, id string) (*models.Playlist, error) {
 // Items returns a playlist's items ordered by position.
 func (s *Store) Items(ctx context.Context, playlistID string) ([]models.PlaylistItem, error) {
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, kind, position, COALESCE(track_id::text,''), COALESCE(album_id::text,'')
+		SELECT id, kind, position, COALESCE(track_id::text,''), COALESCE(album_id::text,''),
+		       COALESCE(group_id::text,'')
 		FROM playlist_items WHERE playlist_id = $1 ORDER BY position`, playlistID)
 	if err != nil {
 		return nil, err
@@ -80,7 +81,7 @@ func (s *Store) Items(ctx context.Context, playlistID string) ([]models.Playlist
 	var out []models.PlaylistItem
 	for rows.Next() {
 		var it models.PlaylistItem
-		if err := rows.Scan(&it.ID, &it.Kind, &it.Position, &it.TrackID, &it.AlbumID); err != nil {
+		if err := rows.Scan(&it.ID, &it.Kind, &it.Position, &it.TrackID, &it.AlbumID, &it.GroupID); err != nil {
 			return nil, err
 		}
 		out = append(out, it)
@@ -130,6 +131,62 @@ func (s *Store) AddItem(ctx context.Context, playlistID string, kind models.Play
 		return nil, err
 	}
 	return &it, tx.Commit(ctx)
+}
+
+// AddGroup appends a set of tracks as one shuffle group: each becomes a
+// kind='track' row sharing a freshly-minted group_id, at consecutive positions
+// in the order given (callers pass them in the order they should play). The
+// resolver keeps same-group tracks together and in order, so a hand-picked
+// subset of an album shuffles as a unit just like a whole-album item.
+func (s *Store) AddGroup(ctx context.Context, playlistID string, trackIDs []string) ([]models.PlaylistItem, error) {
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var groupID string
+	if err := tx.QueryRow(ctx, `SELECT uuid_generate_v4()`).Scan(&groupID); err != nil {
+		return nil, err
+	}
+
+	var nextPos int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(position)+1, 0) FROM playlist_items WHERE playlist_id = $1`, playlistID,
+	).Scan(&nextPos); err != nil {
+		return nil, err
+	}
+
+	out := make([]models.PlaylistItem, 0, len(trackIDs))
+	for _, trackID := range trackIDs {
+		it := models.PlaylistItem{
+			Kind:     models.ItemKindTrack,
+			Position: nextPos,
+			TrackID:  trackID,
+			GroupID:  groupID,
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO playlist_items (playlist_id, kind, position, track_id, group_id)
+			VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+			playlistID, models.ItemKindTrack, nextPos, trackID, groupID,
+		).Scan(&it.ID); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+		nextPos++
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE playlists SET updated_at = now() WHERE id = $1`, playlistID); err != nil {
+		return nil, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+// RemoveGroup deletes every item belonging to a group in one statement.
+func (s *Store) RemoveGroup(ctx context.Context, playlistID, groupID string) error {
+	_, err := s.db.Pool.Exec(ctx,
+		`DELETE FROM playlist_items WHERE playlist_id = $1 AND group_id = $2`, playlistID, groupID)
+	return err
 }
 
 // RemoveItem deletes an item and leaves remaining positions as-is (gaps are

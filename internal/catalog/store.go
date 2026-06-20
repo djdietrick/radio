@@ -7,6 +7,7 @@ import (
 	"github.com/djdietrick/radio/internal/catalog/metadata"
 	"github.com/djdietrick/radio/internal/db"
 	"github.com/djdietrick/radio/internal/models"
+	"github.com/jackc/pgx/v5"
 )
 
 // Store provides catalog persistence: upserting tracks (with their artist and
@@ -211,12 +212,16 @@ func (s *Store) ListTracksByAlbum(ctx context.Context, albumID string) ([]models
 	return scanTracks(rows)
 }
 
+// albumSelect is the shared projection for album rows with computed track
+// counts and durations. Callers append a WHERE/GROUP BY/ORDER BY as needed.
+const albumSelect = `
+	SELECT a.id, a.title, a.album_artist, a.year, a.has_art, a.added_at,
+	       COUNT(t.id), COALESCE(SUM(t.duration_ms), 0)
+	FROM albums a LEFT JOIN tracks t ON t.album_id = a.id`
+
 // ListAlbums returns albums with computed track counts and durations.
 func (s *Store) ListAlbums(ctx context.Context, limit, offset int) ([]models.Album, error) {
-	rows, err := s.db.Pool.Query(ctx, `
-		SELECT a.id, a.title, a.album_artist, a.year, a.has_art, a.added_at,
-		       COUNT(t.id), COALESCE(SUM(t.duration_ms), 0)
-		FROM albums a LEFT JOIN tracks t ON t.album_id = a.id
+	rows, err := s.db.Pool.Query(ctx, albumSelect+`
 		GROUP BY a.id
 		ORDER BY a.album_artist, a.year, a.title
 		LIMIT $1 OFFSET $2`, limit, offset)
@@ -224,7 +229,29 @@ func (s *Store) ListAlbums(ctx context.Context, limit, offset int) ([]models.Alb
 		return nil, err
 	}
 	defer rows.Close()
+	return scanAlbums(rows)
+}
 
+// GetAlbum returns a single album with computed track count and duration.
+func (s *Store) GetAlbum(ctx context.Context, id string) (*models.Album, error) {
+	rows, err := s.db.Pool.Query(ctx, albumSelect+`
+		WHERE a.id = $1
+		GROUP BY a.id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	albums, err := scanAlbums(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(albums) == 0 {
+		return nil, pgx.ErrNoRows
+	}
+	return &albums[0], nil
+}
+
+func scanAlbums(rows rowsIface) ([]models.Album, error) {
 	var out []models.Album
 	for rows.Next() {
 		var a models.Album

@@ -99,9 +99,14 @@ func NewRouter(d Deps) http.Handler {
 
 			// Library
 			r.Get("/albums", h.ListAlbums)
+			r.Get("/albums/{albumID}", h.GetAlbum)
 			r.Get("/albums/{albumID}/tracks", h.AlbumTracks)
 			r.Get("/albums/{albumID}/art", h.AlbumArt)
+			r.Get("/artists", h.ListArtists)
+			r.Get("/artists/{artistID}", h.GetArtist)
+			r.Get("/artists/{artistID}/albums", h.ArtistAlbums)
 			r.Get("/tracks/{trackID}", h.GetTrack)
+			r.Get("/search", h.Search)
 			r.Post("/scan", h.TriggerScan)
 			r.Post("/backfill", h.TriggerBackfill)
 
@@ -115,8 +120,11 @@ func NewRouter(d Deps) http.Handler {
 			r.Delete("/playlists/{playlistID}", h.DeletePlaylist)
 			r.Post("/playlists/{playlistID}/items", h.AddPlaylistItem)
 			r.Delete("/playlists/{playlistID}/items/{itemID}", h.RemovePlaylistItem)
+			r.Delete("/playlists/{playlistID}/groups/{groupID}", h.RemovePlaylistGroup)
 
-			// Radio management (create requires auth; reads above are public)
+			// Radio management (create requires auth; single-station reads
+			// above are public, but listing is gated to logged-in users)
+			r.Get("/stations", h.ListStations)
 			r.Post("/stations", h.CreateStation)
 
 			// User management (admin only)
